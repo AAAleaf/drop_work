@@ -1,0 +1,76 @@
+name: Build Spark llama.cpp runtime (XHToken fork)
+
+# 用途：在 GitHub Actions 上编译 XHToken/llama.cpp（支持 spark2_5 架构），
+#       产出能加载 Spark-X2.5-4B-GGUF 的 llama-server / llama-cli 等二进制。
+#       这是 LM Studio / Ollama 当前无法原生加载该自定义架构模型的 workaround。
+#
+# 触发：
+#   - 手动：Actions 页面 → 此 workflow → Run workflow（可改 commit / 开 CUDA）
+#   - 自动：推送修改本 workflow 文件时
+# 产物：Actions 页面下载 llama-spark-win-x64 / llama-spark-linux-x64 压缩包
+
+on:
+  workflow_dispatch:
+    inputs:
+      spark_commit:
+        description: "Pinned XHToken/llama.cpp commit (full 40-char sha)"
+        required: false
+        default: "4a3635c32fc9f044c2bde9ebeabf50c7e1ec5991"
+      enable_cuda:
+        description: "Build with CUDA (needs a GPU runner; default CPU only)"
+        type: boolean
+        required: false
+        default: false
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/build-spark-runtime.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    steps:
+      - name: Checkout XHToken/llama.cpp (pinned, recursive submodules)
+        uses: actions/checkout@v4
+        with:
+          repository: XHToken/llama.cpp
+          ref: ${{ github.event.inputs.spark_commit || '4a3635c32fc9f044c2bde9ebeabf50c7e1ec5991' }}
+          submodules: recursive
+          fetch-depth: 1
+
+      - name: Install ninja (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y ninja-build
+
+      - name: Configure (Linux, Ninja)
+        if: runner.os == 'Linux'
+        run: |
+          cmake -S . -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DGGML_CUDA=${{ github.event.inputs.enable_cuda == 'true' && 'ON' || 'OFF' }}
+
+      - name: Configure (Windows, MSVC)
+        if: runner.os == 'Windows'
+        run: |
+          cmake -S . -B build `
+            -DCMAKE_BUILD_TYPE=Release `
+            -DGGML_CUDA=${{ github.event.inputs.enable_cuda == 'true' && 'ON' || 'OFF' }}
+
+      - name: Build
+        run: cmake --build build --config Release --parallel
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: llama-spark-${{ matrix.os == 'ubuntu-latest' && 'linux' || 'win' }}-x64
+          path: build/bin/**
+          if-no-files-found: warn
+          retention-days: 30
