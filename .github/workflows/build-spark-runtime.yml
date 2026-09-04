@@ -64,8 +64,11 @@ jobs:
             -DCMAKE_BUILD_TYPE=Release `
             -DGGML_CUDA=${{ github.event.inputs.enable_cuda == 'true' && 'ON' || 'OFF' }}
 
-      - name: Build
-        run: cmake --build build --config Release --parallel
+      # 只编要用的几个 target。原 fork 里部分 test/example target 在 GA 上会编译失败，
+      # 而 cmake --build --parallel 会把非零退出码汇总到结尾导致整轮 exit 1、Upload 不跑。
+      # 限定 target 后，边角 target 失败不再拖垮出包。
+      - name: Build (only needed tools)
+        run: cmake --build build --config Release --parallel --target llama-server llama-cli llama-quantize llama-perplexity
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
